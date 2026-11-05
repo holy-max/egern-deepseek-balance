@@ -25,7 +25,7 @@ env_schema:
 scriptings:
 - generic:
     name: DeepSeek 余额
-    script_url: https://raw.githubusercontent.com/holy-max/egern-deepseek-balance/main/deepseek-balance.js?v=ui5
+    script_url: https://raw.githubusercontent.com/holy-max/egern-deepseek-balance/3e23313e89bdfeb80177a94be1c2f412dd597b8c/deepseek-balance.js
     timeout: 15
     update_interval: 300
 

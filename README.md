@@ -33,6 +33,8 @@
 
 国内可用 ghfast 前缀拉取 `script_url`。
 
+> 若改完仍像旧版：GitHub raw 对 `/main/` 路径有 CDN 缓存，`?v=` 不一定刷新；可用 commit SHA 路径或等几分钟后再同步模块。
+
 ## 开发
 
 ```bash
