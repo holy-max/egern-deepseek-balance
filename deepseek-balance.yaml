@@ -1,5 +1,5 @@
 name: "DeepSeek 余额"
-description: "官方余额 + 充值/赠送 + 峰/谷计价（holy-max，无曲线）"
+description: "官方余额 + 充值/赠送 + 精确峰/谷倒计时（holy-max，无曲线、无自上次）"
 author: "holy-max"
 homepage: "https://github.com/holy-max/egern-deepseek-balance"
 icon: "brain.head.profile"
@@ -25,7 +25,7 @@ env_schema:
 scriptings:
 - generic:
     name: DeepSeek 余额
-    script_url: https://raw.githubusercontent.com/holy-max/egern-deepseek-balance/main/deepseek-balance.js?v=ui3
+    script_url: https://raw.githubusercontent.com/holy-max/egern-deepseek-balance/main/deepseek-balance.js?v=ui4
     timeout: 15
     update_interval: 300
 
