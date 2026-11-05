@@ -17,10 +17,6 @@ env_schema:
     name: 币种偏好
     description: "优先 CNY 或 USD；留空则选总额更大的池"
     default_value: "CNY"
-  history_points:
-    name: 历史点数
-    description: "本地余额快照点数，仅用于「自上次」差额（默认 8）"
-    default_value: "8"
   title:
     name: 标题
     description: "小组件标题"
@@ -29,7 +25,7 @@ env_schema:
 scriptings:
 - generic:
     name: DeepSeek 余额
-    script_url: https://raw.githubusercontent.com/holy-max/egern-deepseek-balance/main/deepseek-balance.js?v=ui2
+    script_url: https://raw.githubusercontent.com/holy-max/egern-deepseek-balance/main/deepseek-balance.js?v=ui3
     timeout: 15
     update_interval: 300
 

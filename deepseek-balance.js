@@ -1,14 +1,13 @@
 // DeepSeek Balance Widget for Egern (holy-max)
 // GET https://api.deepseek.com/user/balance
 // Peak windows: official pricing — Beijing Mon–Fri 09:00–12:00 & 14:00–18:00
-// Layout: ServerCat-like — balance + 充值/赠送 + 峰/谷 badge + next window (no chart)
+// Dense card layout (ServerCat / server-monitor-ring style). No trend chart.
 
 export default async function (ctx) {
   const env = ctx.env || {};
   const apiKey = String(env.API_KEY || env.key || '').trim();
   const warn = Number(env.warn_cny || env.warn || 10) || 10;
   const preferCurrency = String(env.currency || 'CNY').trim().toUpperCase();
-  const historyPoints = Math.max(2, Math.min(24, Number(env.history_points) || 8)); // local delta only, no chart
   const title = String(env.title || 'DeepSeek').trim() || 'DeepSeek';
 
   const C = {
@@ -17,7 +16,6 @@ export default async function (ctx) {
     good: '#3fb950', peak: '#ff7b72', off: '#3fb950',
     warn: '#d29922', bad: '#ff7b72',
     topped: '#58a6ff', granted: '#a371f7',
-    line: '#58a6ff', fill: 'rgba(88,166,255,0.22)',
     track: '#30363d',
   };
 
@@ -48,16 +46,17 @@ export default async function (ctx) {
   const topped = num(row.topped_up_balance);
   const available = payload.is_available !== false && total > 0;
 
-  const hist = persistHistory(ctx, { currency, total, topped, granted }, historyPoints);
-  const delta = hist.length >= 2 ? total - hist[hist.length - 2].total : null;
-  const spentWindow = spendFromHistory(hist);
+  const prev = readLast(ctx);
+  const delta = prev && prev.currency === currency ? total - num(prev.total) : null;
+  writeLast(ctx, { currency, total, topped, granted });
+
   const phase = peakPhase(new Date());
   const accent = !available || total <= 0 ? C.bad : total <= warn ? C.warn : C.good;
   const phaseColor = phase.isPeak ? C.peak : C.off;
 
   const data = {
     title, currency, total, granted, topped, available, warn,
-    delta, spentWindow, hist, phase, accent, phaseColor, C, bgGradient,
+    delta, phase, accent, phaseColor, C, bgGradient,
   };
 
   const family = ctx.widgetFamily || 'systemMedium';
@@ -75,7 +74,7 @@ async function fetchBalance(ctx, apiKey) {
     headers: {
       Authorization: `Bearer ${apiKey}`,
       Accept: 'application/json',
-      'User-Agent': 'Egern-DeepSeek-Balance/1.0 (holy-max)',
+      'User-Agent': 'Egern-DeepSeek-Balance/1.1 (holy-max)',
     },
   });
   const status = Number(resp && resp.status);
@@ -103,44 +102,25 @@ function pickBalance(infos, prefer) {
   return scored[0];
 }
 
-// ─── History (local only — API has no spend series) ───
-function persistHistory(ctx, sample, maxPoints) {
-  const key = '_dsBalH';
-  const prev = (ctx.storage && ctx.storage.getJSON(key)) || [];
-  const list = Array.isArray(prev) ? prev.slice() : [];
-  const now = Date.now();
-  const last = list[list.length - 1];
-  // Deduplicate near-identical samples within 60s
-  if (last && last.currency === sample.currency && Math.abs(now - (last.t || 0)) < 60_000
-      && Math.abs(num(last.total) - sample.total) < 0.005) {
-    last.t = now;
-  } else {
-    list.push({ t: now, currency: sample.currency, total: sample.total, topped: sample.topped, granted: sample.granted });
-  }
-  while (list.length > maxPoints) list.shift();
-  if (ctx.storage && ctx.storage.setJSON) ctx.storage.setJSON(key, list);
-  return list;
+// ─── Last sample only (for delta; no chart history) ───
+function readLast(ctx) {
+  if (!ctx.storage || !ctx.storage.getJSON) return null;
+  const v = ctx.storage.getJSON('_dsBalLast');
+  return v && typeof v === 'object' ? v : null;
 }
 
-function spendFromHistory(hist) {
-  if (!hist || hist.length < 2) return null;
-  let spent = 0;
-  for (let i = 1; i < hist.length; i++) {
-    const d = hist[i - 1].total - hist[i].total;
-    if (d > 0.004) spent += d; // ignore top-ups
-  }
-  return spent;
+function writeLast(ctx, sample) {
+  if (!ctx.storage || !ctx.storage.setJSON) return;
+  ctx.storage.setJSON('_dsBalLast', { t: Date.now(), ...sample });
 }
 
 // ─── Peak / off-peak (official 2026) ─────────
 // Peak: UTC Mon–Fri 01:00–04:00 & 06:00–10:00
 //     = Beijing Mon–Fri 09:00–12:00 & 14:00–18:00
-// Off-peak: all other hours, weekends, Chinese public holidays (full day)
-// Source: https://api-docs.deepseek.com/quick_start/pricing/
 function peakPhase(now = new Date()) {
   const parts = beijingParts(now);
   const holiday = isChinaHoliday(parts.y, parts.m, parts.d);
-  const weekend = parts.weekday === 0 || parts.weekday === 6; // Sun=0 Sat=6
+  const weekend = parts.weekday === 0 || parts.weekday === 6;
   const mins = parts.h * 60 + parts.min;
   const inMorning = mins >= 9 * 60 && mins < 12 * 60;
   const inAfternoon = mins >= 14 * 60 && mins < 18 * 60;
@@ -185,7 +165,7 @@ function beijingParts(date) {
   for (const p of fmt.formatToParts(date)) map[p.type] = p.value;
   const weekdayMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
   let h = Number(map.hour);
-  if (h === 24) h = 0; // some engines
+  if (h === 24) h = 0;
   return {
     y: Number(map.year),
     m: Number(map.month),
@@ -197,23 +177,14 @@ function beijingParts(date) {
   };
 }
 
-// 2026 State Council holiday rest days (Beijing calendar dates)
-// https://www.gov.cn/zhengce/content/202511/content_7047090.htm
 const HOLIDAYS_2026 = new Set([
-  // 元旦
   '2026-01-01', '2026-01-02', '2026-01-03',
-  // 春节
   '2026-02-15', '2026-02-16', '2026-02-17', '2026-02-18', '2026-02-19',
   '2026-02-20', '2026-02-21', '2026-02-22', '2026-02-23',
-  // 清明
   '2026-04-04', '2026-04-05', '2026-04-06',
-  // 劳动节
   '2026-05-01', '2026-05-02', '2026-05-03', '2026-05-04', '2026-05-05',
-  // 端午
   '2026-06-19', '2026-06-20', '2026-06-21',
-  // 中秋
   '2026-09-25', '2026-09-26', '2026-09-27',
-  // 国庆
   '2026-10-01', '2026-10-02', '2026-10-03', '2026-10-04',
   '2026-10-05', '2026-10-06', '2026-10-07',
 ]);
@@ -221,14 +192,10 @@ const HOLIDAYS_2026 = new Set([
 function isChinaHoliday(y, m, d) {
   const key = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
   if (y === 2026) return HOLIDAYS_2026.has(key);
-  // Outside baked year: weekends still handled separately; weekday holidays unknown → not holiday
   return false;
 }
 
 function nextBoundary(parts, holiday) {
-  // Compute next peak↔off switch from current Beijing wall clock
-  const base = Date.UTC(parts.y, parts.m - 1, parts.d, parts.h - 8, parts.min, parts.sec || 0); // rough → better use iterative
-  // Walk forward in 30-min steps up to 8 days
   const start = new Date();
   for (let i = 1; i <= 8 * 48; i++) {
     const t = new Date(start.getTime() + i * 30 * 60 * 1000);
@@ -266,7 +233,7 @@ function fmtMoney(n, currency) {
 }
 
 function deltaLine(delta, currency) {
-  if (delta == null) return '首次采样';
+  if (delta == null) return null;
   if (Math.abs(delta) < 0.005) return '自上次 · 无变化';
   if (delta < 0) return `自上次 · 花了 ${fmtMoney(-delta, currency)}`;
   return `自上次 · 到账 ${fmtMoney(delta, currency)}`;
@@ -283,28 +250,28 @@ function toRgb(hex) {
   return `rgb(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255})`;
 }
 
-// (sparkline removed — chart was empty '采样中…' until many samples; UI space not worth it)
-
-// Optional remaining-vs-warn ring (only when warn > 0)
-function warnRingSrc(total, warn, color, size = 56, stroke = 6) {
-  const pct = warn > 0 ? Math.max(0, Math.min(100, Math.round((total / warn) * 100))) : 100;
-  // Interpret as "headroom above warn": full ring when total >= warn*2 for calm look,
-  // or ratio total/warn capped — use min(total/warn, 2)/2 so warn==total → 50%, 2x warn → 100%
-  const ratio = warn > 0 ? Math.max(0, Math.min(1, total / (warn * 2))) : 1;
-  const r = size / 2 - stroke;
-  const circ = 2 * Math.PI * r;
-  const dash = ratio * circ;
-  const strokeColor = toRgb(color);
-  const track = toRgb('#30363d');
-  const label = total >= 100 ? total.toFixed(0) : total.toFixed(1);
-  const svg =
-    `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 ${size} ${size}'>` +
-    `<circle cx='${size / 2}' cy='${size / 2}' r='${r}' fill='none' stroke='${track}' stroke-width='${stroke}'/>` +
-    `<circle cx='${size / 2}' cy='${size / 2}' r='${r}' fill='none' stroke='${strokeColor}' stroke-width='${stroke}' ` +
-    `stroke-linecap='round' stroke-dasharray='${dash.toFixed(2)} ${circ.toFixed(2)}' transform='rotate(-90 ${size / 2} ${size / 2})'/>` +
-    `<text x='${size / 2}' y='${size / 2}' fill='${toRgb('#e6edf3')}' font-size='${size >= 56 ? 12 : 10}' font-weight='700' ` +
-    `text-anchor='middle' dominant-baseline='central'>${label}</text></svg>`;
-  return `data:image/svg+xml,${svg}`;
+// Thin remaining-vs-warn bar (large only)
+function warnBar(total, warn, color, C, currency, width = 280, height = 6) {
+  if (!(warn > 0)) return null;
+  const ratio = Math.max(0, Math.min(1, total / (warn * 2)));
+  const filled = Math.max(2, Math.round(ratio * width));
+  return {
+    type: 'stack', direction: 'column', gap: 3, children: [
+      {
+        type: 'stack', direction: 'row', alignItems: 'center', children: [
+          { type: 'text', text: `告警线 ${fmtMoney(warn, currency)}`, font: { size: 'caption2' }, textColor: C.dim },
+          { type: 'spacer' },
+          { type: 'text', text: total <= warn ? '偏低' : '充足', font: { size: 'caption2', weight: 'semibold' }, textColor: color },
+        ],
+      },
+      {
+        type: 'stack', direction: 'row', height, borderRadius: height / 2, backgroundColor: C.track, children: [
+          { type: 'stack', width: filled, height, borderRadius: height / 2, backgroundColor: color, children: [] },
+          { type: 'spacer' },
+        ],
+      },
+    ],
+  };
 }
 
 // ─── Layout helpers ──────────────────────────
@@ -324,14 +291,33 @@ function phaseBadge(phase, phaseColor, C) {
 }
 
 function headerRow(data, iconSize = 14) {
-  const { title, C, phase, phaseColor } = data;
+  const { title, C, phase, phaseColor, accent } = data;
   return {
     type: 'stack', direction: 'row', alignItems: 'center', gap: 6,
     children: [
-      { type: 'image', src: 'sf-symbol:brain.head.profile', color: data.accent, width: iconSize, height: iconSize },
+      { type: 'image', src: 'sf-symbol:brain.head.profile', color: accent, width: iconSize, height: iconSize },
       { type: 'text', text: title, font: { size: 'headline', weight: 'bold' }, textColor: C.text, maxLines: 1 },
       { type: 'spacer' },
       phaseBadge(phase, phaseColor, C),
+    ],
+  };
+}
+
+function moneyPair(topped, granted, currency, C) {
+  return {
+    type: 'stack', direction: 'row', alignItems: 'center', gap: 10, children: [
+      {
+        type: 'text', text: `充值 ${fmtMoney(topped, currency)}`,
+        font: { size: 11, family: 'Menlo', weight: 'medium' }, textColor: C.topped, maxLines: 1,
+      },
+      {
+        type: 'text', text: '·',
+        font: { size: 11 }, textColor: C.dim,
+      },
+      {
+        type: 'text', text: `赠送 ${fmtMoney(granted, currency)}`,
+        font: { size: 11, family: 'Menlo', weight: 'medium' }, textColor: C.granted, maxLines: 1,
+      },
     ],
   };
 }
@@ -357,7 +343,7 @@ function errorWidget(title, detail) {
 function layoutSmall(data) {
   const { C, total, topped, granted, currency, phase, phaseColor, accent, bgGradient, title } = data;
   return {
-    type: 'widget', backgroundGradient: bgGradient, padding: 12, gap: 8,
+    type: 'widget', backgroundGradient: bgGradient, padding: 10, gap: 5,
     refreshAfter: refreshAfterMinutes(10),
     children: [
       {
@@ -365,7 +351,7 @@ function layoutSmall(data) {
           { type: 'image', src: 'sf-symbol:brain.head.profile', color: accent, width: 12, height: 12 },
           { type: 'text', text: title, font: { size: 'caption1', weight: 'bold' }, textColor: C.text, maxLines: 1, minScale: 0.7 },
           { type: 'spacer' },
-          phaseBadge(phase, phaseColor, C),
+          { type: 'text', text: phase.badge, font: { size: 'caption1', weight: 'bold' }, textColor: phaseColor },
         ],
       },
       {
@@ -374,23 +360,12 @@ function layoutSmall(data) {
         textColor: accent, maxLines: 1, minScale: 0.55,
       },
       {
-        type: 'stack', direction: 'row', alignItems: 'center', gap: 8, children: [
-          {
-            type: 'stack', direction: 'column', gap: 1, flex: 1, children: [
-              { type: 'text', text: '充值', font: { size: 'caption2' }, textColor: C.muted },
-              { type: 'text', text: fmtMoney(topped, currency), font: { size: 11, weight: 'semibold', family: 'Menlo' }, textColor: C.topped, maxLines: 1, minScale: 0.7 },
-            ],
-          },
-          {
-            type: 'stack', direction: 'column', gap: 1, flex: 1, children: [
-              { type: 'text', text: '赠送', font: { size: 'caption2' }, textColor: C.muted },
-              { type: 'text', text: fmtMoney(granted, currency), font: { size: 11, weight: 'semibold', family: 'Menlo' }, textColor: C.granted, maxLines: 1, minScale: 0.7 },
-            ],
-          },
-        ],
+        type: 'text',
+        text: `充 ${fmtMoney(topped, currency)}  赠 ${fmtMoney(granted, currency)}`,
+        font: { size: 10, family: 'Menlo' }, textColor: C.muted, maxLines: 1, minScale: 0.7,
       },
       {
-        type: 'text', text: `${phase.nextLabel} · ${phase.leftStr}`,
+        type: 'text', text: phase.hint,
         font: { size: 'caption2' }, textColor: C.muted, maxLines: 1, minScale: 0.65,
       },
     ],
@@ -399,35 +374,99 @@ function layoutSmall(data) {
 
 function layoutMedium(data) {
   const { C, total, topped, granted, currency, phase, phaseColor, accent, bgGradient, delta } = data;
+  const dline = deltaLine(delta, currency);
   return {
-    type: 'widget', backgroundGradient: bgGradient, padding: [12, 14], gap: 8,
+    type: 'widget', backgroundGradient: bgGradient, padding: [10, 12], gap: 6,
     refreshAfter: refreshAfterMinutes(10),
     children: [
       headerRow(data, 14),
       {
-        type: 'stack', direction: 'row', alignItems: 'center', gap: 12,
-        padding: 12, borderRadius: 14, backgroundColor: C.card,
+        type: 'stack', direction: 'column', gap: 6,
+        padding: 10, borderRadius: 12, backgroundColor: C.card,
         children: [
           {
-            type: 'stack', direction: 'column', gap: 3, flex: 1, children: [
-              { type: 'text', text: '总余额', font: { size: 'caption2', weight: 'semibold' }, textColor: C.muted },
+            type: 'stack', direction: 'row', alignItems: 'end', gap: 8, children: [
               {
-                type: 'text', text: fmtMoney(total, currency),
-                font: { size: 'title', weight: 'bold', family: 'Menlo' },
-                textColor: accent, maxLines: 1, minScale: 0.5,
+                type: 'stack', direction: 'column', gap: 2, flex: 1, children: [
+                  { type: 'text', text: '总余额', font: { size: 'caption2', weight: 'semibold' }, textColor: C.muted },
+                  {
+                    type: 'text', text: fmtMoney(total, currency),
+                    font: { size: 'title', weight: 'bold', family: 'Menlo' },
+                    textColor: accent, maxLines: 1, minScale: 0.5,
+                  },
+                ],
               },
               {
-                type: 'text', text: deltaLine(delta, currency),
-                font: { size: 'caption2' }, textColor: C.dim, maxLines: 1, minScale: 0.7,
+                type: 'stack', direction: 'column', alignItems: 'end', gap: 3, children: [
+                  {
+                    type: 'text', text: `充值 ${fmtMoney(topped, currency)}`,
+                    font: { size: 11, family: 'Menlo', weight: 'medium' }, textColor: C.topped, maxLines: 1,
+                  },
+                  {
+                    type: 'text', text: `赠送 ${fmtMoney(granted, currency)}`,
+                    font: { size: 11, family: 'Menlo', weight: 'medium' }, textColor: C.granted, maxLines: 1,
+                  },
+                ],
               },
             ],
           },
           {
-            type: 'stack', direction: 'column', alignItems: 'end', gap: 6, children: [
-              moneyChip('充值', topped, currency, C.topped, C),
-              moneyChip('赠送', granted, currency, C.granted, C),
+            type: 'stack', height: 0.5, backgroundColor: C.track, children: [{ type: 'spacer' }],
+          },
+          {
+            type: 'stack', direction: 'row', alignItems: 'center', children: [
+              {
+                type: 'text', text: phase.windowText,
+                font: { size: 'caption1', weight: 'bold', family: 'Menlo' }, textColor: phaseColor, maxLines: 1,
+              },
+              { type: 'spacer' },
+              {
+                type: 'text', text: phase.hint,
+                font: { size: 'caption2' }, textColor: C.muted, maxLines: 1, minScale: 0.65,
+              },
             ],
           },
+          ...(dline ? [{
+            type: 'text', text: dline,
+            font: { size: 'caption2', family: 'Menlo' }, textColor: C.dim, maxLines: 1, minScale: 0.7,
+          }] : []),
+        ],
+      },
+      {
+        type: 'stack', direction: 'row', alignItems: 'center', children: [
+          { type: 'spacer' },
+          { type: 'date', date: new Date().toISOString(), format: 'relative', font: { size: 'caption2' }, textColor: C.dim },
+        ],
+      },
+    ],
+  };
+}
+
+function layoutLarge(data) {
+  const { C, total, topped, granted, currency, phase, phaseColor, accent, bgGradient, delta, warn } = data;
+  const dline = deltaLine(delta, currency);
+  const bar = warnBar(total, warn, accent, C, currency);
+  return {
+    type: 'widget', backgroundGradient: bgGradient, padding: [12, 14], gap: 8,
+    refreshAfter: refreshAfterMinutes(10),
+    children: [
+      headerRow(data, 16),
+      {
+        type: 'stack', direction: 'column', gap: 8,
+        padding: 12, borderRadius: 14, backgroundColor: C.card,
+        children: [
+          { type: 'text', text: '总余额', font: { size: 'caption1', weight: 'semibold' }, textColor: C.muted },
+          {
+            type: 'text', text: fmtMoney(total, currency),
+            font: { size: 'largeTitle', weight: 'bold', family: 'Menlo' },
+            textColor: accent, maxLines: 1, minScale: 0.45,
+          },
+          moneyPair(topped, granted, currency, C),
+          ...(dline ? [{
+            type: 'text', text: dline,
+            font: { size: 'caption1', family: 'Menlo' }, textColor: C.dim, maxLines: 1,
+          }] : []),
+          ...(bar ? [bar] : []),
         ],
       },
       {
@@ -438,116 +477,20 @@ function layoutMedium(data) {
             type: 'text', text: phase.isPeak ? '高峰计价' : '谷时半价',
             font: { size: 'subheadline', weight: 'bold' }, textColor: phaseColor,
           },
-          {
-            type: 'text', text: phase.isPeak ? phase.windowText : '全时半价中',
-            font: { size: 'caption1', family: 'Menlo' }, textColor: C.muted, maxLines: 1,
-          },
+          { type: 'text', text: phase.windowText, font: { size: 'caption1', family: 'Menlo' }, textColor: C.muted },
           { type: 'spacer' },
           {
-            type: 'text', text: `${phase.leftStr} → ${phase.nextLabel}`,
+            type: 'text', text: phase.leftStr + ' → ' + phase.nextLabel,
             font: { size: 'caption1' }, textColor: C.dim, maxLines: 1, minScale: 0.7,
           },
         ],
       },
-    ],
-  };
-}
-
-function layoutLarge(data) {
-  const { C, total, topped, granted, currency, phase, phaseColor, accent, bgGradient, delta, spentWindow, warn } = data;
-  const showRing = warn > 0;
-  return {
-    type: 'widget', backgroundGradient: bgGradient, padding: [14, 16], gap: 10,
-    refreshAfter: refreshAfterMinutes(10),
-    children: [
-      headerRow(data, 16),
       {
-        type: 'stack', direction: 'row', alignItems: 'center', gap: 14,
-        padding: 14, borderRadius: 16, backgroundColor: C.card,
-        children: [
-          ...(showRing ? [{
-            type: 'image',
-            src: warnRingSrc(total, warn, accent, 68, 7),
-            width: 68, height: 68, resizeMode: 'contain',
-          }] : []),
-          {
-            type: 'stack', direction: 'column', gap: 4, flex: 1, children: [
-              { type: 'text', text: '总余额', font: { size: 'caption1', weight: 'semibold' }, textColor: C.muted },
-              {
-                type: 'text', text: fmtMoney(total, currency),
-                font: { size: 'largeTitle', weight: 'bold', family: 'Menlo' },
-                textColor: accent, maxLines: 1, minScale: 0.45,
-              },
-              {
-                type: 'text', text: deltaLine(delta, currency),
-                font: { size: 'caption1' }, textColor: C.dim, maxLines: 1,
-              },
-            ],
-          },
+        type: 'stack', direction: 'row', alignItems: 'center', children: [
+          { type: 'spacer' },
+          { type: 'date', date: new Date().toISOString(), format: 'relative', font: { size: 'caption2' }, textColor: C.dim },
         ],
       },
-      {
-        type: 'stack', direction: 'row', gap: 10, children: [
-          {
-            type: 'stack', direction: 'column', gap: 4, flex: 1,
-            padding: 12, borderRadius: 12, backgroundColor: C.card, children: [
-              { type: 'text', text: '充值余额', font: { size: 'caption1', weight: 'semibold' }, textColor: C.muted },
-              { type: 'text', text: fmtMoney(topped, currency), font: { size: 'title3', weight: 'bold', family: 'Menlo' }, textColor: C.topped, maxLines: 1, minScale: 0.6 },
-            ],
-          },
-          {
-            type: 'stack', direction: 'column', gap: 4, flex: 1,
-            padding: 12, borderRadius: 12, backgroundColor: C.card, children: [
-              { type: 'text', text: '赠送余额', font: { size: 'caption1', weight: 'semibold' }, textColor: C.muted },
-              { type: 'text', text: fmtMoney(granted, currency), font: { size: 'title3', weight: 'bold', family: 'Menlo' }, textColor: C.granted, maxLines: 1, minScale: 0.6 },
-            ],
-          },
-        ],
-      },
-      {
-        type: 'stack', direction: 'column', gap: 6,
-        padding: 12, borderRadius: 12, backgroundColor: C.card, children: [
-          {
-            type: 'stack', direction: 'row', alignItems: 'center', children: [
-              {
-                type: 'text', text: phase.isPeak ? '● 高峰计价' : '● 谷时半价',
-                font: { size: 'headline', weight: 'bold' }, textColor: phaseColor,
-              },
-              { type: 'spacer' },
-              {
-                type: 'text', text: phase.isPeak ? phase.windowText : '周末/节假/非高峰',
-                font: { size: 'caption1', family: 'Menlo' }, textColor: C.muted, maxLines: 1,
-              },
-            ],
-          },
-          {
-            type: 'text', text: phase.hint,
-            font: { size: 'caption1' }, textColor: C.muted, maxLines: 2,
-          },
-          {
-            type: 'stack', direction: 'row', alignItems: 'center', children: [
-              {
-                type: 'text',
-                text: spentWindow != null ? `采样窗消耗 ${fmtMoney(spentWindow, currency)}` : '多刷几次可看窗内消耗',
-                font: { size: 'caption2', family: 'Menlo' }, textColor: C.dim, maxLines: 1,
-              },
-              { type: 'spacer' },
-              { type: 'date', date: new Date().toISOString(), format: 'relative', font: { size: 'caption2' }, textColor: C.dim },
-            ],
-          },
-        ],
-      },
-    ],
-  };
-}
-
-function moneyChip(label, value, currency, color, C) {
-  return {
-    type: 'stack', direction: 'column', alignItems: 'end', gap: 1,
-    padding: [4, 8], borderRadius: 8, backgroundColor: '#0d1117',
-    children: [
-      { type: 'text', text: label, font: { size: 'caption2' }, textColor: C.muted },
-      { type: 'text', text: fmtMoney(value, currency), font: { size: 12, weight: 'semibold', family: 'Menlo' }, textColor: color },
     ],
   };
 }
@@ -563,15 +506,30 @@ function lockInline(data) {
 }
 
 function lockCircular(data) {
+  const size = 56;
+  const stroke = 6;
+  const warn = Math.max(data.warn, 0.01);
+  const ratio = Math.max(0, Math.min(1, data.total / (warn * 2)));
+  const r = size / 2 - stroke;
+  const circ = 2 * Math.PI * r;
+  const dash = ratio * circ;
+  const strokeColor = toRgb(data.accent);
+  const track = toRgb('#30363d');
+  const label = data.total >= 100 ? data.total.toFixed(0) : data.total.toFixed(1);
+  const svg =
+    `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 ${size} ${size}'>` +
+    `<circle cx='${size / 2}' cy='${size / 2}' r='${r}' fill='none' stroke='${track}' stroke-width='${stroke}'/>` +
+    `<circle cx='${size / 2}' cy='${size / 2}' r='${r}' fill='none' stroke='${strokeColor}' stroke-width='${stroke}' ` +
+    `stroke-linecap='round' stroke-dasharray='${dash.toFixed(2)} ${circ.toFixed(2)}' transform='rotate(-90 ${size / 2} ${size / 2})'/>` +
+    `<text x='${size / 2}' y='${size / 2}' fill='${toRgb('#e6edf3')}' font-size='12' font-weight='700' ` +
+    `text-anchor='middle' dominant-baseline='central'>${label}</text></svg>`;
   return {
     type: 'widget', padding: 2,
-    children: [
-      {
-        type: 'image',
-        src: warnRingSrc(data.total, Math.max(data.warn, data.total || 1), data.accent, 56, 6),
-        width: 56, height: 56, resizeMode: 'contain',
-      },
-    ],
+    children: [{
+      type: 'image',
+      src: `data:image/svg+xml,${svg}`,
+      width: 56, height: 56, resizeMode: 'contain',
+    }],
   };
 }
 
