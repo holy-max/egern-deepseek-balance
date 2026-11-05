@@ -1,0 +1,37 @@
+name: "DeepSeek 余额"
+description: "官方余额 + 本地趋势曲线 + 峰/谷计价状态（holy-max）"
+author: "holy-max"
+homepage: "https://github.com/holy-max/egern-deepseek-balance"
+icon: "brain.head.profile"
+
+env_schema:
+  API_KEY:
+    name: API Key
+    description: "platform.deepseek.com 创建的 sk-… Key，只保存在本机模块 Env，不会进仓库"
+    default_value: ""
+  warn_cny:
+    name: 告警阈值
+    description: "余额低于该值时变黄/告警色（默认 10，单位与 currency 一致）"
+    default_value: "10"
+  currency:
+    name: 币种偏好
+    description: "优先 CNY 或 USD；留空则选总额更大的池"
+    default_value: "CNY"
+  history_points:
+    name: 历史点数
+    description: "本地持久化采样点数（用于趋势曲线，默认 24）"
+    default_value: "24"
+  title:
+    name: 标题
+    description: "小组件标题"
+    default_value: "DeepSeek"
+
+scriptings:
+- generic:
+    name: DeepSeek 余额
+    script_url: https://raw.githubusercontent.com/holy-max/egern-deepseek-balance/main/deepseek-balance.js
+    timeout: 15
+
+widgets:
+- name: DeepSeek 余额
+  script_name: DeepSeek 余额
