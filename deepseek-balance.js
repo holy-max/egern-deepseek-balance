@@ -1,7 +1,7 @@
 // DeepSeek Balance Widget for Egern (holy-max)
 // GET https://api.deepseek.com/user/balance
 // Peak: Beijing Mon–Fri 09:00–12:00 & 14:00–18:00 (excl. CN holidays); else off-peak
-// Redesign ui5: fix illegal alignItems stretch (Egern only allows start|end|center); ui4: no last-delta, exact next-boundary countdown, dense ServerCat-like card
+// Redesign ui6: flat medium layout (no nested card overflow); ui5: alignItems center only; ui4: no last-delta + exact BJ peak countdown
 
 export default async function (ctx) {
   const env = ctx.env || {};
@@ -294,13 +294,12 @@ function toRgb(hex) {
 // ─── Layout helpers ──────────────────────────
 function phasePill(phase, phaseColor, C) {
   return {
-    type: 'stack', direction: 'row', alignItems: 'center', gap: 4,
-    padding: [3, 8], borderRadius: 8, backgroundColor: C.chip,
-    borderWidth: 1, borderColor: phaseColor + '66',
+    type: 'stack', direction: 'row', alignItems: 'center', gap: 3,
+    padding: [2, 7], borderRadius: 7, backgroundColor: C.chip,
     children: [
       {
         type: 'text', text: phase.isPeak ? '● 高峰' : '● 谷时',
-        font: { size: 'caption1', weight: 'bold' },
+        font: { size: 'caption2', weight: 'bold' },
         textColor: phaseColor, maxLines: 1,
       },
     ],
@@ -320,10 +319,21 @@ function headerRow(data, iconSize = 14) {
   };
 }
 
+/** Compact dual amounts — single text line, no padded chip cards (those overflow medium height). */
+function amountsLine(topped, granted, currency, C) {
+  return {
+    type: 'text',
+    text: `充 ${fmtMoney(topped, currency)}   ·   赠 ${fmtMoney(granted, currency)}`,
+    font: { size: 'caption1', family: 'Menlo', weight: 'medium' },
+    textColor: C.muted, maxLines: 1, minScale: 0.65,
+  };
+}
+
+/** Side-by-side thin chips for large only (enough vertical room). */
 function moneyChip(label, amount, currency, color, C) {
   return {
     type: 'stack', direction: 'column', gap: 2, flex: 1,
-    padding: [8, 10], borderRadius: 10, backgroundColor: C.chip,
+    padding: [6, 8], borderRadius: 8, backgroundColor: C.chip,
     children: [
       { type: 'text', text: label, font: { size: 'caption2', weight: 'semibold' }, textColor: C.muted, maxLines: 1 },
       {
@@ -334,23 +344,22 @@ function moneyChip(label, amount, currency, color, C) {
   };
 }
 
-function statusStrip(phase, phaseColor, C) {
+function statusLine(phase, phaseColor, C) {
   return {
-    type: 'stack', direction: 'row', alignItems: 'center', gap: 8,
-    padding: [8, 10], borderRadius: 10, backgroundColor: C.chip,
+    type: 'stack', direction: 'row', alignItems: 'center', gap: 6,
     children: [
       {
         type: 'text', text: phase.windowText,
         font: { size: 'caption1', weight: 'bold', family: 'Menlo' },
         textColor: phaseColor, maxLines: 1, minScale: 0.75,
       },
-      { type: 'spacer' },
       {
         type: 'text',
-        text: `${phase.leftStr}后${phase.enteringPeak ? '进峰' : '进谷'}`,
+        text: `·  ${phase.leftStr}后${phase.enteringPeak ? '进峰' : '进谷'}`,
         font: { size: 'caption1', weight: 'medium' },
         textColor: C.muted, maxLines: 1, minScale: 0.7,
       },
+      { type: 'spacer' },
     ],
   };
 }
@@ -364,12 +373,12 @@ function footerRelative(C) {
   };
 }
 
-function warnBar(total, warn, color, C, currency, width = 280, height = 6) {
+function warnBar(total, warn, color, C, currency, width = 280, height = 5) {
   if (!(warn > 0)) return null;
   const ratio = Math.max(0, Math.min(1, total / (warn * 2)));
   const filled = Math.max(2, Math.round(ratio * width));
   return {
-    type: 'stack', direction: 'column', gap: 3, children: [
+    type: 'stack', direction: 'column', gap: 2, children: [
       {
         type: 'stack', direction: 'row', alignItems: 'center', children: [
           { type: 'text', text: `告警线 ${fmtMoney(warn, currency)}`, font: { size: 'caption2' }, textColor: C.dim },
@@ -405,10 +414,12 @@ function errorWidget(title, detail) {
 }
 
 // ─── Size layouts ────────────────────────────
+// Medium iOS height ~155–169pt. Nested card + title(28) + padded chips overflow
+// and Egern stacks children on top of each other — keep flat & compact.
 function layoutSmall(data) {
   const { C, total, topped, granted, currency, phase, phaseColor, accent, bgGradient, title } = data;
   return {
-    type: 'widget', backgroundGradient: bgGradient, padding: 10, gap: 5,
+    type: 'widget', backgroundGradient: bgGradient, padding: 10, gap: 4,
     refreshAfter: refreshAfterMinutes(10),
     children: [
       {
@@ -424,14 +435,10 @@ function layoutSmall(data) {
       },
       {
         type: 'text', text: fmtMoney(total, currency),
-        font: { size: 'title', weight: 'bold', family: 'Menlo' },
+        font: { size: 'title3', weight: 'bold', family: 'Menlo' },
         textColor: accent, maxLines: 1, minScale: 0.55,
       },
-      {
-        type: 'text',
-        text: `充 ${fmtMoney(topped, currency)}  ·  赠 ${fmtMoney(granted, currency)}`,
-        font: { size: 10, family: 'Menlo' }, textColor: C.muted, maxLines: 1, minScale: 0.7,
-      },
+      amountsLine(topped, granted, currency, C),
       {
         type: 'text',
         text: `${phase.leftStr}后${phase.enteringPeak ? '进峰' : '进谷'}`,
@@ -444,33 +451,36 @@ function layoutSmall(data) {
 function layoutMedium(data) {
   const { C, total, topped, granted, currency, phase, phaseColor, accent, bgGradient } = data;
   return {
-    type: 'widget', backgroundGradient: bgGradient, padding: [10, 12], gap: 8,
+    type: 'widget', backgroundGradient: bgGradient, padding: [10, 12], gap: 6,
     refreshAfter: refreshAfterMinutes(10),
     children: [
       headerRow(data, 14),
       {
-        type: 'stack', direction: 'column', gap: 8,
-        padding: 12, borderRadius: 12, backgroundColor: C.card,
-        children: [
+        type: 'stack', direction: 'column', gap: 2, children: [
+          { type: 'text', text: '总余额', font: { size: 'caption2', weight: 'semibold' }, textColor: C.muted, maxLines: 1 },
           {
-            type: 'stack', direction: 'column', gap: 2, children: [
-              { type: 'text', text: '总余额', font: { size: 'caption2', weight: 'semibold' }, textColor: C.muted },
-              {
-                type: 'text', text: fmtMoney(total, currency),
-                font: { size: 'title', weight: 'bold', family: 'Menlo' },
-                textColor: accent, maxLines: 1, minScale: 0.5,
-              },
-            ],
+            type: 'text', text: fmtMoney(total, currency),
+            // title=28 overflows medium when stacked with chips; title3=20 fits
+            font: { size: 'title3', weight: 'bold', family: 'Menlo' },
+            textColor: accent, maxLines: 1, minScale: 0.6,
           },
-          {
-            type: 'stack', direction: 'row', alignItems: 'center', gap: 8, children: [
-              moneyChip('充值', topped, currency, C.topped, C),
-              moneyChip('赠送', granted, currency, C.granted, C),
-            ],
-          },
-          statusStrip(phase, phaseColor, C),
         ],
       },
+      {
+        type: 'stack', direction: 'row', alignItems: 'center', gap: 10, children: [
+          {
+            type: 'text', text: `充 ${fmtMoney(topped, currency)}`,
+            font: { size: 'caption1', family: 'Menlo', weight: 'semibold' },
+            textColor: C.topped, maxLines: 1, minScale: 0.7,
+          },
+          {
+            type: 'text', text: `赠 ${fmtMoney(granted, currency)}`,
+            font: { size: 'caption1', family: 'Menlo', weight: 'semibold' },
+            textColor: C.granted, maxLines: 1, minScale: 0.7,
+          },
+        ],
+      },
+      statusLine(phase, phaseColor, C),
       footerRelative(C),
     ],
   };
@@ -480,30 +490,28 @@ function layoutLarge(data) {
   const { C, total, topped, granted, currency, phase, phaseColor, accent, bgGradient, warn } = data;
   const bar = warnBar(total, warn, accent, C, currency);
   return {
-    type: 'widget', backgroundGradient: bgGradient, padding: [12, 14], gap: 10,
+    type: 'widget', backgroundGradient: bgGradient, padding: [12, 14], gap: 8,
     refreshAfter: refreshAfterMinutes(10),
     children: [
       headerRow(data, 16),
       {
-        type: 'stack', direction: 'column', gap: 10,
-        padding: 14, borderRadius: 14, backgroundColor: C.card,
-        children: [
+        type: 'stack', direction: 'column', gap: 3, children: [
           { type: 'text', text: '总余额', font: { size: 'caption1', weight: 'semibold' }, textColor: C.muted },
           {
             type: 'text', text: fmtMoney(total, currency),
-            font: { size: 'largeTitle', weight: 'bold', family: 'Menlo' },
-            textColor: accent, maxLines: 1, minScale: 0.45,
+            font: { size: 'title', weight: 'bold', family: 'Menlo' },
+            textColor: accent, maxLines: 1, minScale: 0.5,
           },
-          {
-            type: 'stack', direction: 'row', alignItems: 'center', gap: 10, children: [
-              moneyChip('充值', topped, currency, C.topped, C),
-              moneyChip('赠送', granted, currency, C.granted, C),
-            ],
-          },
-          ...(bar ? [bar] : []),
         ],
       },
-      statusStrip(phase, phaseColor, C),
+      {
+        type: 'stack', direction: 'row', alignItems: 'center', gap: 8, children: [
+          moneyChip('充值', topped, currency, C.topped, C),
+          moneyChip('赠送', granted, currency, C.granted, C),
+        ],
+      },
+      ...(bar ? [bar] : []),
+      statusLine(phase, phaseColor, C),
       footerRelative(C),
     ],
   };
