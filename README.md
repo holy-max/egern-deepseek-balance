@@ -2,7 +2,7 @@
 
 [holy-max](https://github.com/holy-max) 公开模块：DeepSeek 官方余额 + 峰/谷计价状态，适配 Egern 小组件。
 
-## 卡片（ui4）
+## 卡片（ui5）
 
 ```
 [brain] DeepSeek                     ● 高峰

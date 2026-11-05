@@ -1,7 +1,7 @@
 // DeepSeek Balance Widget for Egern (holy-max)
 // GET https://api.deepseek.com/user/balance
 // Peak: Beijing Mon–Fri 09:00–12:00 & 14:00–18:00 (excl. CN holidays); else off-peak
-// Redesign ui4: no last-delta, exact next-boundary countdown, dense ServerCat-like card
+// Redesign ui5: fix illegal alignItems stretch (Egern only allows start|end|center); ui4: no last-delta, exact next-boundary countdown, dense ServerCat-like card
 
 export default async function (ctx) {
   const env = ctx.env || {};
@@ -463,7 +463,7 @@ function layoutMedium(data) {
             ],
           },
           {
-            type: 'stack', direction: 'row', alignItems: 'stretch', gap: 8, children: [
+            type: 'stack', direction: 'row', alignItems: 'center', gap: 8, children: [
               moneyChip('充值', topped, currency, C.topped, C),
               moneyChip('赠送', granted, currency, C.granted, C),
             ],
@@ -495,7 +495,7 @@ function layoutLarge(data) {
             textColor: accent, maxLines: 1, minScale: 0.45,
           },
           {
-            type: 'stack', direction: 'row', alignItems: 'stretch', gap: 10, children: [
+            type: 'stack', direction: 'row', alignItems: 'center', gap: 10, children: [
               moneyChip('充值', topped, currency, C.topped, C),
               moneyChip('赠送', granted, currency, C.granted, C),
             ],
