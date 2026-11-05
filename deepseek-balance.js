@@ -1,15 +1,14 @@
 // DeepSeek Balance Widget for Egern (holy-max)
 // GET https://api.deepseek.com/user/balance
-// Trend: local persistence via ctx.storage (API has no usage history)
-// Peak windows: official pricing docs — Beijing Mon–Fri 09:00–12:00 & 14:00–18:00
-// Inspiration: local Surge DeepSeek-Balance panel + community peak badges
+// Peak windows: official pricing — Beijing Mon–Fri 09:00–12:00 & 14:00–18:00
+// Layout: ServerCat-like — balance + 充值/赠送 + 峰/谷 badge + next window (no chart)
 
 export default async function (ctx) {
   const env = ctx.env || {};
   const apiKey = String(env.API_KEY || env.key || '').trim();
   const warn = Number(env.warn_cny || env.warn || 10) || 10;
   const preferCurrency = String(env.currency || 'CNY').trim().toUpperCase();
-  const historyPoints = Math.max(8, Math.min(48, Number(env.history_points) || 24));
+  const historyPoints = Math.max(2, Math.min(24, Number(env.history_points) || 8)); // local delta only, no chart
   const title = String(env.title || 'DeepSeek').trim() || 'DeepSeek';
 
   const C = {
@@ -267,7 +266,7 @@ function fmtMoney(n, currency) {
 }
 
 function deltaLine(delta, currency) {
-  if (delta == null) return '首次采样 · 曲线将随刷新生长';
+  if (delta == null) return '首次采样';
   if (Math.abs(delta) < 0.005) return '自上次 · 无变化';
   if (delta < 0) return `自上次 · 花了 ${fmtMoney(-delta, currency)}`;
   return `自上次 · 到账 ${fmtMoney(delta, currency)}`;
@@ -284,38 +283,7 @@ function toRgb(hex) {
   return `rgb(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255})`;
 }
 
-// ─── SVG sparkline (balance over local samples) ───
-function sparkSrc(hist, color, w = 200, h = 48) {
-  const vals = (hist || []).map((x) => num(x.total));
-  if (vals.length < 2) {
-    const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 ${w} ${h}'>` +
-      `<text x='${w / 2}' y='${h / 2}' fill='${toRgb(Cdim())}' font-size='11' text-anchor='middle' dominant-baseline='middle'>采样中…</text></svg>`;
-    return `data:image/svg+xml,${svg}`;
-  }
-  const min = Math.min(...vals);
-  const max = Math.max(...vals);
-  const span = Math.max(max - min, 0.01);
-  const padY = 4;
-  const pts = vals.map((v, i) => {
-    const x = (i / (vals.length - 1)) * (w - 2) + 1;
-    const y = padY + (1 - (v - min) / span) * (h - padY * 2);
-    return `${x.toFixed(1)},${y.toFixed(1)}`;
-  });
-  const poly = pts.join(' ');
-  const first = pts[0].split(',');
-  const last = pts[pts.length - 1].split(',');
-  const area = `${first[0]},${h - 1} ${poly} ${last[0]},${h - 1}`;
-  const stroke = toRgb(color);
-  const svg =
-    `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 ${w} ${h}'>` +
-    `<polygon points='${area}' fill='rgba(88,166,255,0.18)' stroke='none'/>` +
-    `<polyline points='${poly}' fill='none' stroke='${stroke}' stroke-width='2.2' stroke-linejoin='round' stroke-linecap='round'/>` +
-    `<circle cx='${last[0]}' cy='${last[1]}' r='2.6' fill='${stroke}'/>` +
-    `</svg>`;
-  return `data:image/svg+xml,${svg}`;
-}
-
-function Cdim() { return '#484f58'; }
+// (sparkline removed — chart was empty '采样中…' until many samples; UI space not worth it)
 
 // Optional remaining-vs-warn ring (only when warn > 0)
 function warnRingSrc(total, warn, color, size = 56, stroke = 6) {
@@ -387,9 +355,9 @@ function errorWidget(title, detail) {
 
 // ─── Size layouts ────────────────────────────
 function layoutSmall(data) {
-  const { C, total, currency, phase, phaseColor, hist, accent, bgGradient, title } = data;
+  const { C, total, topped, granted, currency, phase, phaseColor, accent, bgGradient, title } = data;
   return {
-    type: 'widget', backgroundGradient: bgGradient, padding: 10, gap: 6,
+    type: 'widget', backgroundGradient: bgGradient, padding: 12, gap: 8,
     refreshAfter: refreshAfterMinutes(10),
     children: [
       {
@@ -397,7 +365,7 @@ function layoutSmall(data) {
           { type: 'image', src: 'sf-symbol:brain.head.profile', color: accent, width: 12, height: 12 },
           { type: 'text', text: title, font: { size: 'caption1', weight: 'bold' }, textColor: C.text, maxLines: 1, minScale: 0.7 },
           { type: 'spacer' },
-          { type: 'text', text: phase.badge, font: { size: 'caption1', weight: 'bold' }, textColor: phaseColor },
+          phaseBadge(phase, phaseColor, C),
         ],
       },
       {
@@ -406,11 +374,23 @@ function layoutSmall(data) {
         textColor: accent, maxLines: 1, minScale: 0.55,
       },
       {
-        type: 'image', src: sparkSrc(hist, C.line, 160, 36),
-        width: 160, height: 36, resizeMode: 'contain',
+        type: 'stack', direction: 'row', alignItems: 'center', gap: 8, children: [
+          {
+            type: 'stack', direction: 'column', gap: 1, flex: 1, children: [
+              { type: 'text', text: '充值', font: { size: 'caption2' }, textColor: C.muted },
+              { type: 'text', text: fmtMoney(topped, currency), font: { size: 11, weight: 'semibold', family: 'Menlo' }, textColor: C.topped, maxLines: 1, minScale: 0.7 },
+            ],
+          },
+          {
+            type: 'stack', direction: 'column', gap: 1, flex: 1, children: [
+              { type: 'text', text: '赠送', font: { size: 'caption2' }, textColor: C.muted },
+              { type: 'text', text: fmtMoney(granted, currency), font: { size: 11, weight: 'semibold', family: 'Menlo' }, textColor: C.granted, maxLines: 1, minScale: 0.7 },
+            ],
+          },
+        ],
       },
       {
-        type: 'text', text: phase.hint,
+        type: 'text', text: `${phase.nextLabel} · ${phase.leftStr}`,
         font: { size: 'caption2' }, textColor: C.muted, maxLines: 1, minScale: 0.65,
       },
     ],
@@ -418,18 +398,18 @@ function layoutSmall(data) {
 }
 
 function layoutMedium(data) {
-  const { C, total, topped, granted, currency, phase, phaseColor, hist, accent, bgGradient, delta, spentWindow } = data;
+  const { C, total, topped, granted, currency, phase, phaseColor, accent, bgGradient, delta } = data;
   return {
-    type: 'widget', backgroundGradient: bgGradient, padding: [10, 12], gap: 6,
+    type: 'widget', backgroundGradient: bgGradient, padding: [12, 14], gap: 8,
     refreshAfter: refreshAfterMinutes(10),
     children: [
       headerRow(data, 14),
       {
-        type: 'stack', direction: 'row', alignItems: 'center', gap: 10,
-        padding: 10, borderRadius: 12, backgroundColor: C.card,
+        type: 'stack', direction: 'row', alignItems: 'center', gap: 12,
+        padding: 12, borderRadius: 14, backgroundColor: C.card,
         children: [
           {
-            type: 'stack', direction: 'column', gap: 2, flex: 1, children: [
+            type: 'stack', direction: 'column', gap: 3, flex: 1, children: [
               { type: 'text', text: '总余额', font: { size: 'caption2', weight: 'semibold' }, textColor: C.muted },
               {
                 type: 'text', text: fmtMoney(total, currency),
@@ -443,35 +423,29 @@ function layoutMedium(data) {
             ],
           },
           {
-            type: 'stack', direction: 'column', alignItems: 'end', gap: 4, children: [
-              {
-                type: 'text', text: `充值 ${fmtMoney(topped, currency)}`,
-                font: { size: 11, family: 'Menlo', weight: 'medium' }, textColor: C.topped, maxLines: 1,
-              },
-              {
-                type: 'text', text: `赠送 ${fmtMoney(granted, currency)}`,
-                font: { size: 11, family: 'Menlo', weight: 'medium' }, textColor: C.granted, maxLines: 1,
-              },
-              {
-                type: 'text', text: phase.windowText,
-                font: { size: 'caption2', weight: 'bold' }, textColor: phaseColor, maxLines: 1,
-              },
+            type: 'stack', direction: 'column', alignItems: 'end', gap: 6, children: [
+              moneyChip('充值', topped, currency, C.topped, C),
+              moneyChip('赠送', granted, currency, C.granted, C),
             ],
           },
         ],
       },
       {
-        type: 'image', src: sparkSrc(hist, accent === data.C.warn || accent === data.C.bad ? accent : C.line, 320, 44),
-        width: 320, height: 44, resizeMode: 'contain',
-      },
-      {
-        type: 'stack', direction: 'row', alignItems: 'center', children: [
-          { type: 'text', text: phase.hint, font: { size: 'caption2' }, textColor: C.muted, maxLines: 1, minScale: 0.65 },
+        type: 'stack', direction: 'row', alignItems: 'center', gap: 8,
+        padding: [8, 10], borderRadius: 10, backgroundColor: C.card,
+        children: [
+          {
+            type: 'text', text: phase.isPeak ? '高峰计价' : '谷时半价',
+            font: { size: 'subheadline', weight: 'bold' }, textColor: phaseColor,
+          },
+          {
+            type: 'text', text: phase.isPeak ? phase.windowText : '全时半价中',
+            font: { size: 'caption1', family: 'Menlo' }, textColor: C.muted, maxLines: 1,
+          },
           { type: 'spacer' },
           {
-            type: 'text',
-            text: spentWindow != null ? `窗内花 ${fmtMoney(spentWindow, currency)}` : `${hist.length} 点`,
-            font: { size: 'caption2', family: 'Menlo' }, textColor: C.dim, maxLines: 1,
+            type: 'text', text: `${phase.leftStr} → ${phase.nextLabel}`,
+            font: { size: 'caption1' }, textColor: C.dim, maxLines: 1, minScale: 0.7,
           },
         ],
       },
@@ -480,24 +454,24 @@ function layoutMedium(data) {
 }
 
 function layoutLarge(data) {
-  const { C, total, topped, granted, currency, phase, phaseColor, hist, accent, bgGradient, delta, spentWindow, warn } = data;
+  const { C, total, topped, granted, currency, phase, phaseColor, accent, bgGradient, delta, spentWindow, warn } = data;
   const showRing = warn > 0;
   return {
-    type: 'widget', backgroundGradient: bgGradient, padding: [12, 14], gap: 8,
+    type: 'widget', backgroundGradient: bgGradient, padding: [14, 16], gap: 10,
     refreshAfter: refreshAfterMinutes(10),
     children: [
       headerRow(data, 16),
       {
-        type: 'stack', direction: 'row', alignItems: 'center', gap: 12,
-        padding: 12, borderRadius: 14, backgroundColor: C.card,
+        type: 'stack', direction: 'row', alignItems: 'center', gap: 14,
+        padding: 14, borderRadius: 16, backgroundColor: C.card,
         children: [
           ...(showRing ? [{
             type: 'image',
-            src: warnRingSrc(total, warn, accent, 64, 7),
-            width: 64, height: 64, resizeMode: 'contain',
+            src: warnRingSrc(total, warn, accent, 68, 7),
+            width: 68, height: 68, resizeMode: 'contain',
           }] : []),
           {
-            type: 'stack', direction: 'column', gap: 3, flex: 1, children: [
+            type: 'stack', direction: 'column', gap: 4, flex: 1, children: [
               { type: 'text', text: '总余额', font: { size: 'caption1', weight: 'semibold' }, textColor: C.muted },
               {
                 type: 'text', text: fmtMoney(total, currency),
@@ -510,56 +484,57 @@ function layoutLarge(data) {
               },
             ],
           },
+        ],
+      },
+      {
+        type: 'stack', direction: 'row', gap: 10, children: [
           {
-            type: 'stack', direction: 'column', alignItems: 'end', gap: 6, children: [
-              moneyChip('充值', topped, currency, C.topped, C),
-              moneyChip('赠送', granted, currency, C.granted, C),
+            type: 'stack', direction: 'column', gap: 4, flex: 1,
+            padding: 12, borderRadius: 12, backgroundColor: C.card, children: [
+              { type: 'text', text: '充值余额', font: { size: 'caption1', weight: 'semibold' }, textColor: C.muted },
+              { type: 'text', text: fmtMoney(topped, currency), font: { size: 'title3', weight: 'bold', family: 'Menlo' }, textColor: C.topped, maxLines: 1, minScale: 0.6 },
+            ],
+          },
+          {
+            type: 'stack', direction: 'column', gap: 4, flex: 1,
+            padding: 12, borderRadius: 12, backgroundColor: C.card, children: [
+              { type: 'text', text: '赠送余额', font: { size: 'caption1', weight: 'semibold' }, textColor: C.muted },
+              { type: 'text', text: fmtMoney(granted, currency), font: { size: 'title3', weight: 'bold', family: 'Menlo' }, textColor: C.granted, maxLines: 1, minScale: 0.6 },
             ],
           },
         ],
       },
       {
-        type: 'stack', direction: 'column', gap: 4, children: [
+        type: 'stack', direction: 'column', gap: 6,
+        padding: 12, borderRadius: 12, backgroundColor: C.card, children: [
           {
             type: 'stack', direction: 'row', alignItems: 'center', children: [
-              { type: 'text', text: '余额趋势（本地采样）', font: { size: 'caption1', weight: 'semibold' }, textColor: C.muted },
+              {
+                type: 'text', text: phase.isPeak ? '● 高峰计价' : '● 谷时半价',
+                font: { size: 'headline', weight: 'bold' }, textColor: phaseColor,
+              },
               { type: 'spacer' },
-              { type: 'text', text: `${hist.length} 点`, font: { size: 'caption2', family: 'Menlo' }, textColor: C.dim },
+              {
+                type: 'text', text: phase.isPeak ? phase.windowText : '周末/节假/非高峰',
+                font: { size: 'caption1', family: 'Menlo' }, textColor: C.muted, maxLines: 1,
+              },
             ],
           },
           {
-            type: 'image', src: sparkSrc(hist, C.line, 340, 72),
-            width: 340, height: 72, resizeMode: 'contain',
+            type: 'text', text: phase.hint,
+            font: { size: 'caption1' }, textColor: C.muted, maxLines: 2,
           },
           {
-            type: 'text',
-            text: '官方无用量历史接口；曲线来自本机每次刷新写入的余额快照',
-            font: { size: 'caption2' }, textColor: C.dim, maxLines: 2,
+            type: 'stack', direction: 'row', alignItems: 'center', children: [
+              {
+                type: 'text',
+                text: spentWindow != null ? `采样窗消耗 ${fmtMoney(spentWindow, currency)}` : '多刷几次可看窗内消耗',
+                font: { size: 'caption2', family: 'Menlo' }, textColor: C.dim, maxLines: 1,
+              },
+              { type: 'spacer' },
+              { type: 'date', date: new Date().toISOString(), format: 'relative', font: { size: 'caption2' }, textColor: C.dim },
+            ],
           },
-        ],
-      },
-      {
-        type: 'stack', direction: 'row', alignItems: 'center', gap: 8,
-        padding: [8, 10], borderRadius: 10, backgroundColor: C.card,
-        children: [
-          {
-            type: 'text', text: phase.isPeak ? '高峰计价' : '谷时半价',
-            font: { size: 'subheadline', weight: 'bold' }, textColor: phaseColor,
-          },
-          { type: 'text', text: phase.windowText, font: { size: 'caption1', family: 'Menlo' }, textColor: C.muted },
-          { type: 'spacer' },
-          { type: 'text', text: phase.leftStr + ' → ' + phase.nextLabel, font: { size: 'caption1' }, textColor: C.dim, maxLines: 1, minScale: 0.7 },
-        ],
-      },
-      {
-        type: 'stack', direction: 'row', alignItems: 'center', children: [
-          {
-            type: 'text',
-            text: spentWindow != null ? `采样窗累计消耗 ${fmtMoney(spentWindow, currency)}` : '消耗统计需多次刷新',
-            font: { size: 'caption2', family: 'Menlo' }, textColor: C.dim,
-          },
-          { type: 'spacer' },
-          { type: 'date', date: new Date().toISOString(), format: 'relative', font: { size: 'caption2' }, textColor: C.dim },
         ],
       },
     ],

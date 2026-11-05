@@ -1,5 +1,5 @@
 name: "DeepSeek 余额"
-description: "官方余额 + 本地趋势曲线 + 峰/谷计价状态（holy-max）"
+description: "官方余额 + 充值/赠送 + 峰/谷计价（holy-max，无曲线）"
 author: "holy-max"
 homepage: "https://github.com/holy-max/egern-deepseek-balance"
 icon: "brain.head.profile"
@@ -19,8 +19,8 @@ env_schema:
     default_value: "CNY"
   history_points:
     name: 历史点数
-    description: "本地持久化采样点数（用于趋势曲线，默认 24）"
-    default_value: "24"
+    description: "本地余额快照点数，仅用于「自上次」差额（默认 8）"
+    default_value: "8"
   title:
     name: 标题
     description: "小组件标题"
@@ -29,8 +29,9 @@ env_schema:
 scriptings:
 - generic:
     name: DeepSeek 余额
-    script_url: https://raw.githubusercontent.com/holy-max/egern-deepseek-balance/main/deepseek-balance.js
+    script_url: https://raw.githubusercontent.com/holy-max/egern-deepseek-balance/main/deepseek-balance.js?v=ui2
     timeout: 15
+    update_interval: 300
 
 widgets:
 - name: DeepSeek 余额
